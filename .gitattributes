@@ -1,0 +1,2 @@
+vendor/** linguist-vendored
+*.pluto linguist-language=Lua

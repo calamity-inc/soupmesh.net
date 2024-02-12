@@ -1,0 +1,37 @@
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="./style.css">
+
+<script src="./vendor/libpluto.js"></script>
+<script src="https://pluto-lang.org/PlutoScript/plutoscript.js"></script>
+<script src="./script.js"></script>
+<script type="pluto" src="./script.pluto"></script>
+
+<div id="generating-private-key" style="display:none">
+	<h1>One-time setup: Generating private key...</h1>
+</div>
+
+<div id="nodes-view" style="display:none">
+	<h2>Linked nodes</h2>
+	<ul></ul>
+	<h3>Add</h3>
+	<p>
+		<input id="link-data" type="text" style="width:50%" />
+		<button id="link-btn">Link</button>
+	</p>
+</div>
+
+<div id="node-view" style="display:none">
+	<h2 id="node-ip"></h2>
+	<p id="node-status">Connecting to node...</p>
+
+	<div id="node-dns" class="d-none">
+		<h3>DNS records</h3>
+		<table></table>
+		<p>
+			<input id="dns-name" type="text" placeholder="Name" />
+			<input id="dns-type" type="text" placeholder="Type" />
+			<input id="dns-value" type="text" placeholder="Value" />
+			<button id="dns-add">Add</button>
+		</p>
+	</div>
+</div>

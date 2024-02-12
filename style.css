@@ -1,0 +1,15 @@
+body {
+	font-family: sans-serif;
+}
+
+.d-none {
+	display: none;
+}
+
+#nodes-view ul:not(:has(li)) {
+	padding-inline-start: 0;
+
+	&:before {
+		content: "You haven't linked any nodes yet.";
+	}
+}

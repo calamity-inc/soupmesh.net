@@ -1,0 +1,173 @@
+pluto_use global
+
+local { base64, bigint, crypto, json } = require"pluto:*"
+
+global function generate_private_key()
+	local pub, priv = crypto.generatekeypair("rsa", -1536)
+	return bigint.tostring(priv.p), bigint.tostring(priv.q)
+end
+
+local function aes_encrypt(data)
+	return crypto.encrypt("aes-ecb-pkcs7", data, send_key)
+end
+
+local function aes_decrypt(data)
+	return crypto.decrypt("aes-ecb-pkcs7", data, recv_key)
+end
+
+local function stringify_ipv4(ip)
+	return $"{ip >> 24}.{(ip >> 16) & 0xff}.{(ip >> 8) & 0xff}.{ip & 0xff}"
+end
+
+local function bigint_from_binary(binary)
+	local x = bigint.new()
+	local m <const> = bigint.new(256)
+	for binary:split("") as b do
+		x *= m
+		x += bigint.new(string.byte(b))
+	end
+	return x
+end
+
+local function bigint_to_binary(x)
+	local t = {}
+	local m <const> = bigint.new(256)
+	while bigint.tostring(x) ~= "0" do
+		t:insert(1, string.char(bigint.tostring(x % m)))
+		x /= m
+	end
+	return t:concat("")
+end
+
+local function get_private_key()
+	local arr = js_invoke("get_private_key")
+	return {
+		p = bigint.new(arr[1]),
+		q = bigint.new(arr[2])
+	}
+end
+
+local function get_public_key_n(priv)
+	return priv.p * priv.q
+end
+
+local function ws_send(data)
+	js_invoke("ws_send", data:split(""):map(string.byte))
+end
+
+local function init_session(ip, pub_n)
+	js_invoke("ws_open", ip)
+
+	global send_key = {}
+	global recv_key = {}
+	for i = 1, 16 do
+		send_key[i] = string.char(math.random(0x00, 0xFF))
+		recv_key[i] = string.char(math.random(0x00, 0xFF))
+	end
+	send_key = send_key:concat("")
+	recv_key = recv_key:concat("")
+
+	global send_seq = 0
+	global recv_seq = 0
+
+	ws_send(crypto.encrypt("rsa-pkcs1", send_key..recv_key, { n = pub_n, e = bigint.new(0x10001) }))
+end
+
+global function link(data)
+	data = base64.decode(data)
+
+	local ip = stringify_ipv4(string.unpack("I4", data))
+	local passnum = data:sub(1 + 4, 4 + 8)
+	local n_bin = data:sub(1 + 4 + 8)
+	local n = bigint_from_binary(n_bin)
+
+	init_session(ip, n)
+	ws_send(aes_encrypt("\0"..passnum..bigint_to_binary(get_public_key_n(get_private_key())))) -- MESH_MSG_LINK
+
+	data = aes_decrypt(js_invoke("ws_recv"))
+	if data[1] == "\1" then -- MESH_MSG_AFFIRMATIVE
+		js_invoke("add_linked", ip, bigint.tostring(n))
+	else
+		window.alert("Linking failed")
+	end
+end
+
+local function fnv1a_32(str)
+	local hash = 2166136261
+	for str:split("") as c do
+		hash = hash ~ c:byte()
+		hash = (hash * 16777619) & 0xffffffff
+	end
+	return hash
+end
+
+global function app_send(msg_name, data = "")
+	ws_send(aes_encrypt(
+		"\7" -- MESH_MSG_APPLICATION
+		..string.pack("I4", send_seq)
+		..msg_name
+		..","
+		..data
+	))
+	++send_seq
+end
+
+global function app_recv()
+	local data = aes_decrypt(js_invoke("ws_recv"))
+	assert(string.unpack("I4", data, 2) == recv_seq)
+	++recv_seq
+	if data[1] == "\2" then -- MESH_MSG_NEGATIVE
+		local err = data:sub(6)
+		if err == "" then
+			err = "Received MESH_MSG_NEGATIVE in response to application message"
+		end
+		window.alert(err)
+		error(err)
+	end
+	assert(data[1] == "\1" or data[1] == "\7") -- MESH_MSG_AFFIRMATIVE or MESH_MSG_APPLICATION
+	return data:sub(6)
+end
+
+global function app_request(msg_name, data)
+	app_send(msg_name, data)
+	return app_recv()
+end
+
+global function connect(ip, pub_n)
+	pub_n = bigint.new(pub_n)
+
+	init_session(ip, pub_n)
+	ws_send(aes_encrypt("\3")) -- MESH_MSG_AUTH_REQUEST
+	local data = aes_decrypt(js_invoke("ws_recv"))
+	assert(data[1] == "\4") -- MESH_MSG_AUTH_CHALLENGE
+	local priv = get_private_key()
+	ws_send(aes_encrypt(
+		"\5" -- MESH_MSG_AUTH_FINISH
+		..string.pack("I4", fnv1a_32(bigint_to_binary(get_public_key_n(priv))))
+		..crypto.sign("rsa-sha256", data:sub(2), priv)
+	))
+	data = aes_decrypt(js_invoke("ws_recv"))
+	assert(data[1] == "\1") -- MESH_MSG_AFFIRMATIVE
+
+	ws_send(aes_encrypt("\6")) -- MESH_MSG_CAPABILITIES
+	data = aes_decrypt(js_invoke("ws_recv"))
+	assert(data[1] == "\6") -- MESH_MSG_CAPABILITIES
+	return data:sub(2):split(",")
+end
+
+global function refresh_dns_records()
+	document.query("#node-dns"):removeClass("d-none")
+	app_send("dns_list_records")
+	local data = app_recv()
+	if data == "" then
+		document.query("#node-dns table").textContent = "No records yet."
+	else
+		document.query("#node-dns table").innerHTML = ""
+		repeat
+			js_invoke("add_dns_record", json.decode(data))
+			data = app_recv()
+		until data == ""
+	end
+end
+
+js_invoke("onPlutoReady")
